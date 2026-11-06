@@ -3161,9 +3161,9 @@ class AsyncEgnyteClient(BaseEgnyteClient):
         """
         Check on an agent question, and get its answer once done.
 
-        `status` is `PENDING` or `RUNNING` until it ends as `COMPLETED` or
-        `FAILED`. Each check counts against the AI limits described on
-        `ask_document`.
+        `status` is `IN_PROGRESS`, `PENDING`, or `RUNNING` until it ends as
+        `COMPLETED` or `FAILED`; a failure carries no detail. Each check
+        counts against the AI limits described on `ask_document`.
 
         Returns:
             AgentExecutionStatus: The status, and the answer once completed.
@@ -3183,7 +3183,7 @@ class AsyncEgnyteClient(BaseEgnyteClient):
         timeout: float = DEFAULT_AI_WAIT_TIMEOUT,
     ) -> AgentExecutionStatus:
         """
-        Poll an agent question until it is no longer pending or running.
+        Poll an agent question until it is no longer in progress.
 
         Checks every `interval` seconds for up to `timeout` seconds. Every
         check is one call against the AI daily limit of 100, so the defaults

@@ -427,7 +427,13 @@ These calls need the `Egnyte.ai` scope on the API key and token, and agents must
 - **AI Assistant and agent questions** are answered in the background. Ask, then poll the returned ID, or call a `wait_for_*` helper (see [Background jobs](#background-jobs)). Pass the returned `conversation_id` with a follow-up question to continue the conversation, and earlier turns as `chat_history`, a list of `ChatMessage`s.
 - **Hybrid search** blends keyword and meaning (`semantic_weight` from 0.0, keywords only, to 1.0, meaning only) and returns each matching file with its scored passages.
 
-These methods follow Egnyte's documentation and have not been exercised against a live domain. Copilot (`/ai/copilot/ask`, retired on 30 September 2026) and Knowledge Bases (`/ai/kb/...`, replaced by agents) are not wrapped.
+Where the live API differs from Egnyte's AI documentation, the client follows the live API:
+
+- A newly uploaded file answers document questions with a 400 (`SMART_APP_SERVICE_ERROR`, "Error getting the extracted content") until Egnyte has extracted its text, which took a few minutes in testing.
+- Agent questions report `IN_PROGRESS` while running, not the documented `PENDING` or `RUNNING`; `wait_for_agent()` treats all three as running. A `FAILED` status carries no reason. Egnyte's built-in Deep Research agent answered `FAILED` to every question asked through the API in testing.
+- Hybrid search returns each file's full path in `filename`, adds `group_id` and `uploaded`, and scores passages on an open scale rather than 0 to 1.
+
+Copilot (`/ai/copilot/ask`, retired on 30 September 2026) and Knowledge Bases (`/ai/kb/...`, replaced by agents) are not wrapped.
 
 ### Trash and insights
 

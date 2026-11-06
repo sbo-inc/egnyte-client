@@ -10,9 +10,10 @@ type AgentSortBy = Literal["name", "createdOn"]
 type AgentSortOrder = Literal["asc", "desc"]
 
 # Execution states. Responses are typed as plain strings so a state Egnyte adds
-# later still parses; these name the documented values.
+# later still parses. Agents are documented as `PENDING` or `RUNNING` while
+# they work, but answer `IN_PROGRESS` live, so all three count as running.
 ASSISTANT_RUNNING_STATUSES = frozenset({"IN_PROGRESS"})
-AGENT_RUNNING_STATUSES = frozenset({"PENDING", "RUNNING"})
+AGENT_RUNNING_STATUSES = frozenset({"IN_PROGRESS", "PENDING", "RUNNING"})
 
 # =============================================================================
 # CLASS: ChatMessage
@@ -73,10 +74,20 @@ class AiCitation(GenericBaseModel):
         alias="entryId",
         description="Version ID of the cited file.",
     )
+    group_id: str | None = Field(
+        default=None,
+        alias="groupId",
+        description="File ID across versions.",
+    )
     object_id: str | None = Field(
         default=None,
         alias="objectId",
         description="Object ID of the cited file.",
+    )
+    file_path: str | None = Field(
+        default=None,
+        alias="filePath",
+        description="Path of the cited file.",
     )
     preview_url: str | None = Field(
         default=None,
@@ -85,7 +96,7 @@ class AiCitation(GenericBaseModel):
     )
     type: str | None = Field(
         default=None,
-        description="Kind of source, such as `WEB_SEARCH`.",
+        description="Kind of source, such as `FILE` or `WEB_SEARCH`.",
     )
     chunks: list[AiCitationChunk] = Field(
         default_factory=list,
@@ -184,6 +195,10 @@ class AssistantToolCall(GenericBaseModel):
     One tool the AI Assistant used while answering.
     """
 
+    id: str | None = Field(
+        default=None,
+        description="Tool call ID, the key it is listed under.",
+    )
     name: str | None = Field(
         default=None,
         description="Internal tool name.",
@@ -220,7 +235,7 @@ class AssistantToolCall(GenericBaseModel):
     )
     timestamp: datetime | None = Field(
         default=None,
-        description="When the tool was called.",
+        description="When the tool was called (sent as epoch seconds).",
     )
     metadata: dict[str, JsonValue] | None = Field(
         default=None,
@@ -363,12 +378,13 @@ class AgentExecutionStatus(GenericBaseModel):
     """
     Where an agent question stands, and its answer once done.
 
-    `status` is `PENDING` or `RUNNING` while it works, then `COMPLETED` or
-    `FAILED`.
+    `status` is `IN_PROGRESS` while it works (`PENDING` or `RUNNING` in
+    Egnyte's documentation), then `COMPLETED` or `FAILED`. A failure carries
+    no detail.
     """
 
     status: str = Field(
-        description="`PENDING`, `RUNNING`, `COMPLETED`, or `FAILED`.",
+        description="`IN_PROGRESS`, `PENDING`, `RUNNING`, `COMPLETED`, or `FAILED`.",
     )
     response_text: str | None = Field(
         default=None,
@@ -412,7 +428,7 @@ class HybridSearchChunk(GenericBaseModel):
     )
     score: float | None = Field(
         default=None,
-        description="Relevance; higher is better.",
+        description="Relevance; higher is better. Not bounded to 0-1.",
     )
 
 
@@ -428,17 +444,27 @@ class HybridSearchResult(GenericBaseModel):
 
     filename: str | None = Field(
         default=None,
-        description="File name.",
+        description="Path of the file (Egnyte's field name says name).",
     )
     entry_id: str | None = Field(
         default=None,
         alias="entryId",
         description="Version ID of the file.",
     )
+    group_id: str | None = Field(
+        default=None,
+        alias="groupId",
+        description="File ID across versions.",
+    )
     object_id: str | None = Field(
         default=None,
         alias="objectId",
         description="Object ID of the file.",
+    )
+    uploaded: datetime | None = Field(
+        default=None,
+        alias="uploadedTimestamp",
+        description="When this version was uploaded.",
     )
     chunks: list[HybridSearchChunk] = Field(
         default_factory=list,

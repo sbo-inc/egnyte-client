@@ -1,8 +1,8 @@
 """
 Coverage of the AI, AI Assistant, agent, and hybrid search methods.
 
-Fixture bodies follow the examples in Egnyte's AI and Agents API docs; the
-endpoints have not been exercised live.
+Fixture bodies are shaped after live responses where those differ from the
+examples in Egnyte's AI and Agents API docs.
 """
 
 import time
@@ -46,25 +46,29 @@ ASSISTANT_DONE: dict[str, Any] = {
         {
             "filename": "Policy.pdf",
             "entryId": "e-1",
-            "objectId": "52.1e0b",
-            "previewUrl": "/navigate/file/3bf2",
-            "chunks": [{"chunkId": "c5", "sourceText": "Text"}],
+            "groupId": "g-1",
+            "objectId": "100.7c6f",
+            "previewUrl": "/navigate/file/g-1",
+            "type": "FILE",
+            "chunks": [{"sourceText": "Text"}],
+            "filePath": "/Shared/Policy.pdf",
         }
     ],
     "intent": "qna",
     "lastUpdated": 1780660757000,
     "numToolCalls": 1,
-    "pendingActions": [],
     "toolCalls": {
         "call_abc123": {
-            "name": "search_documents",
-            "sourceDisplayName": "Egnyte",
-            "toolDisplayName": "Document Search",
-            "thought": "Searching for relevant documents",
-            "input": {"query": "premium examples"},
+            "id": "call_abc123",
+            "name": "egnyte_grep",
+            "toolDisplayName": "Searching within files",
+            "metadata": {"mcp_tool_display_name": "Searching within files"},
+            "thought": "I'll search for premium examples.",
+            "input": {"query": "premium examples", "folder_paths": ["/Shared"]},
             "output": "Found 3 relevant documents",
             "status": "success",
-            "timestamp": "2025-06-05T10:00:00Z",
+            "timestamp": "1793940365.394058",
+            "thoughts": [],
         }
     },
 }
@@ -91,22 +95,26 @@ AGENT_DONE: dict[str, Any] = {
     "lastUpdated": "2025-09-18T10:24:59Z",
 }
 
+# Live, `filename` is the full path, scores are unbounded, and the envelope
+# carries an `error` field.
 HYBRID: dict[str, Any] = {
     "results": [
         {
-            "filename": "Financial_Report_2023.pdf",
+            "uploadedTimestamp": 1793940250000,
+            "filename": "/Shared/Finance/Financial_Report_2023.pdf",
             "entryId": "e-2",
-            "objectId": "obj123456",
+            "groupId": "g-2",
             "chunks": [
                 {
                     "chunkId": "chunk-123",
                     "chunkText": "Revenue rose 15%.",
                     "type": "TEXT",
-                    "score": 0.92,
+                    "score": 592.3972,
                 }
             ],
         }
-    ]
+    ],
+    "error": None,
 }
 
 
@@ -240,11 +248,18 @@ def test_get_assistant_execution(make_client: Callable[..., EgnyteClient]) -> No
     assert sent[0].url.params["includeCitations"] == "false"
     assert status.status == "COMPLETED"
     assert status.response_text is not None
-    assert status.citations[0].preview_url == "/navigate/file/3bf2"
+    citation = status.citations[0]
+    assert citation.preview_url == "/navigate/file/g-1"
+    assert citation.file_path == "/Shared/Policy.pdf"
+    assert citation.group_id == "g-1"
+    assert citation.chunks[0].chunk_id is None
     assert status.last_updated == datetime(2026, 6, 5, 11, 59, 17, tzinfo=UTC)
     call = status.tool_calls["call_abc123"]
-    assert call.tool_display_name == "Document Search"
-    assert call.input == {"query": "premium examples"}
+    assert call.id == "call_abc123"
+    assert call.tool_display_name == "Searching within files"
+    assert call.input == {"query": "premium examples", "folder_paths": ["/Shared"]}
+    # Live, a tool call's timestamp is epoch seconds in a string.
+    assert call.timestamp == datetime(2026, 11, 6, 4, 46, 5, 394058, tzinfo=UTC)
 
 
 def test_wait_for_assistant_polls_until_done(
@@ -380,14 +395,16 @@ def test_wait_for_agent(
         make_client,
         respond({"status": "PENDING"}),
         respond({"status": "RUNNING"}),
+        # Live, agents report IN_PROGRESS rather than the documented states.
+        respond({"status": "IN_PROGRESS", "lastUpdated": 1793940287000}),
         respond({"status": "FAILED"}),
     )
 
     status = client.wait_for_agent("a-1", "r-1")
 
     assert status.status == "FAILED"
-    assert len(sent) == 3
-    assert no_sleep == [10.0, 10.0]
+    assert len(sent) == 4
+    assert no_sleep == [10.0, 10.0, 10.0]
 
 
 def test_wait_for_agent_times_out(
@@ -439,9 +456,11 @@ def test_hybrid_search(make_client: Callable[..., EgnyteClient]) -> None:
         "createdBefore": 1640995200000,
         "limit": 50,
     }
-    assert results[0].filename == "Financial_Report_2023.pdf"
+    assert results[0].filename == "/Shared/Finance/Financial_Report_2023.pdf"
+    assert results[0].group_id == "g-2"
+    assert results[0].uploaded == datetime(2026, 11, 6, 4, 44, 10, tzinfo=UTC)
     assert results[0].chunks[0].chunk_text == "Revenue rose 15%."
-    assert results[0].chunks[0].score == 0.92
+    assert results[0].chunks[0].score == 592.3972
 
 
 def test_hybrid_search_defaults_to_an_even_weight(
