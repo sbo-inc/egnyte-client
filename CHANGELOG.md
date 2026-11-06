@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+- Egnyte AI: `ask_document` and `summarize_document`; the AI Assistant with `ask_assistant`, `get_assistant_execution`, and `wait_for_assistant`; agents with `list_agents`, `ask_agent`, `get_agent_execution`, and `wait_for_agent`; and `hybrid_search`. The CLI commands are under `egnyte-client ai`. These follow Egnyte's documentation and are not yet verified against a live domain.
+- `EgnyteTimeoutError`, raised when a `wait_for_*` helper gives up. It is also a `TimeoutError`.
+- An error body's `errorCode` is now kept as the error's `code`, as the AI and agent endpoints report it (for example `AGENTS_FEATURE_NOT_ENABLED`).
+
 ## [0.1.0] - 2026-11-05
 
 - `EgnyteClient` and `AsyncEgnyteClient`, method-for-method identical, over `httpx`.

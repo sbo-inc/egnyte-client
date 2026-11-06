@@ -40,6 +40,20 @@ class EgnyteConfigurationError(EgnyteError, ValueError):
 
 
 # =============================================================================
+# CLASS: EgnyteTimeoutError
+# =============================================================================
+
+
+class EgnyteTimeoutError(EgnyteError, TimeoutError):
+    """
+    Raised when a wait for background work runs past its timeout.
+
+    The work itself carries on at Egnyte; the ID it was polled by can be
+    checked again later. It is also a `TimeoutError`.
+    """
+
+
+# =============================================================================
 # CLASS: EgnyteAPIError
 # =============================================================================
 
@@ -253,6 +267,7 @@ def _describe(response: httpx.Response) -> tuple[str, str | None]:
     Shapes seen live:
 
     - `{"errorMessage": "Not found"}` (file system)
+    - `{"errorMessage", "errorCode"}` (documented for AI and agents)
     - `{"message": "Link does not exist"}` (links)
     - `{"formErrors": [{"msg", "code"}], "inputErrors": {field: [{"msg", "code"}]}}` (users, groups)
     - `{"fault": {"faultstring", "detail": {"errorcode"}}}` (gateway: auth, rate limit)
@@ -273,7 +288,7 @@ def _describe(response: httpx.Response) -> tuple[str, str | None]:
     for key in ("errorMessage", "message"):
         value = data.get(key)
         if isinstance(value, str) and value:
-            return value, None
+            return value, _str(data.get("errorCode"))
 
     fault = data.get("fault")
     if isinstance(fault, dict):

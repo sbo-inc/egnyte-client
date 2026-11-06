@@ -6,7 +6,8 @@ from typing import BinaryIO, Literal, Self
 
 import httpx
 
-from egnyte_client.errors import EgnyteConfigurationError
+from egnyte_client.errors import EgnyteConfigurationError, EgnyteTimeoutError
+from egnyte_client.operations import ai as ai_ops
 from egnyte_client.operations import audit as audit_ops
 from egnyte_client.operations import auth as auth_ops
 from egnyte_client.operations import bookmark as bookmark_ops
@@ -22,8 +23,26 @@ from egnyte_client.operations import search as search_ops
 from egnyte_client.operations import trash as trash_ops
 from egnyte_client.operations import user as user_ops
 from egnyte_client.operations import webhook as webhook_ops
+from egnyte_client.operations.ai import (
+    DEFAULT_AI_POLL_INTERVAL,
+    DEFAULT_AI_WAIT_TIMEOUT,
+)
 from egnyte_client.operations.filesystem import Permissions, SortBy, SortDirection
 from egnyte_client.operations.generic import Operation
+from egnyte_client.schemas.ai import (
+    AGENT_RUNNING_STATUSES,
+    ASSISTANT_RUNNING_STATUSES,
+    Agent,
+    AgentExecution,
+    AgentExecutionStatus,
+    AgentSortBy,
+    AgentSortOrder,
+    AiAnswer,
+    AssistantExecution,
+    AssistantExecutionStatus,
+    ChatMessage,
+    HybridSearchResult,
+)
 from egnyte_client.schemas.audit import (
     AuditEventPage,
     AuditJob,
@@ -2866,5 +2885,340 @@ class EgnyteClient(BaseEgnyteClient):
                 next_cursor=next_cursor,
                 audit_types=audit_types,
                 end_date=end_date,
+            )
+        )
+
+    # -------------------------------------------------------------------------
+    # METHOD: ask_document
+    # -------------------------------------------------------------------------
+
+    def ask_document(
+        self,
+        entry_id: str,
+        question: str,
+        *,
+        include_citations: bool | None = None,
+        chat_history: list[ChatMessage] | None = None,
+    ) -> AiAnswer:
+        """
+        Ask Egnyte AI a question about one file version, by entry ID.
+
+        The answer comes back in the response. `include_citations` adds the
+        passages it drew on; `chat_history` carries earlier turns for a
+        follow-up. AI calls are limited to 100 a day, 10 a minute, and 2 a
+        second per token, on top of the general limits, and need the
+        `Egnyte.ai` scope.
+
+        Returns:
+            AiAnswer: The answer, with citations when requested.
+        """
+        return self._run(
+            ai_ops.ask_document(
+                entry_id,
+                question,
+                include_citations=include_citations,
+                chat_history=chat_history,
+            )
+        )
+
+    # -------------------------------------------------------------------------
+    # METHOD: summarize_document
+    # -------------------------------------------------------------------------
+
+    def summarize_document(
+        self, entry_id: str, *, chat_history: list[ChatMessage] | None = None
+    ) -> AiAnswer:
+        """
+        Summarize one file version with Egnyte AI, by entry ID.
+
+        Counts against the AI limits described on `ask_document`.
+
+        Returns:
+            AiAnswer: The summary, in `text`.
+        """
+        return self._run(ai_ops.summarize_document(entry_id, chat_history=chat_history))
+
+    # -------------------------------------------------------------------------
+    # METHOD: ask_assistant
+    # -------------------------------------------------------------------------
+
+    def ask_assistant(
+        self,
+        question: str,
+        *,
+        folder_ids: list[str] | None = None,
+        entry_ids: list[str] | None = None,
+        search_all: bool | None = None,
+        web_search: bool | None = None,
+        include_citations: bool | None = None,
+        chat_history: list[ChatMessage] | None = None,
+        conversation_id: str | None = None,
+        mcp_selection_id: str | None = None,
+        model_name: str | None = None,
+        model_version: str | None = None,
+    ) -> AssistantExecution:
+        """
+        Ask the AI Assistant a question across files, folders, or the domain.
+
+        The question is answered in the background: poll the returned
+        `execution_id` with `get_assistant_execution`, or block on
+        `wait_for_assistant`. Scope it with `folder_ids` and `entry_ids`, or
+        `search_all` for all domain content; `web_search` adds web results.
+        Pass a previous `conversation_id` to continue a conversation.
+        `model_version` picks the model (Egnyte's default is
+        `gemini-2.5-flash`). Counts against the AI limits described on
+        `ask_document`.
+
+        Returns:
+            AssistantExecution: The execution ID to poll and the conversation ID.
+        """
+        return self._run(
+            ai_ops.ask_assistant(
+                question,
+                folder_ids=folder_ids,
+                entry_ids=entry_ids,
+                search_all=search_all,
+                web_search=web_search,
+                include_citations=include_citations,
+                chat_history=chat_history,
+                conversation_id=conversation_id,
+                mcp_selection_id=mcp_selection_id,
+                model_name=model_name,
+                model_version=model_version,
+            )
+        )
+
+    # -------------------------------------------------------------------------
+    # METHOD: get_assistant_execution
+    # -------------------------------------------------------------------------
+
+    def get_assistant_execution(
+        self, execution_id: str, *, include_citations: bool | None = None
+    ) -> AssistantExecutionStatus:
+        """
+        Check on an AI Assistant question, and get its answer once done.
+
+        `status` stays `IN_PROGRESS` until it ends as `COMPLETED`, `FAILED`,
+        or `AWAITING_USER_CONFIRMATION`. Citations are included unless
+        `include_citations` is false. Each check counts against the AI limits
+        described on `ask_document`.
+
+        Returns:
+            AssistantExecutionStatus: The status, and the answer once completed.
+        """
+        return self._run(
+            ai_ops.get_assistant_execution(
+                execution_id, include_citations=include_citations
+            )
+        )
+
+    # -------------------------------------------------------------------------
+    # METHOD: wait_for_assistant
+    # -------------------------------------------------------------------------
+
+    def wait_for_assistant(
+        self,
+        execution_id: str,
+        *,
+        include_citations: bool | None = None,
+        interval: float = DEFAULT_AI_POLL_INTERVAL,
+        timeout: float = DEFAULT_AI_WAIT_TIMEOUT,
+    ) -> AssistantExecutionStatus:
+        """
+        Poll an AI Assistant question until it is no longer in progress.
+
+        Checks every `interval` seconds for up to `timeout` seconds. Every
+        check is one call against the AI daily limit of 100, so the defaults
+        (10 and 180 seconds) cost at most 19 calls. A `FAILED` or
+        `AWAITING_USER_CONFIRMATION` status is returned, not raised.
+
+        Raises:
+            EgnyteTimeoutError: The question was still in progress at `timeout`.
+
+        Returns:
+            AssistantExecutionStatus: The final status, and the answer once completed.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            status = self.get_assistant_execution(
+                execution_id, include_citations=include_citations
+            )
+            if status.status not in ASSISTANT_RUNNING_STATUSES:
+                return status
+            if time.monotonic() + interval > deadline:
+                raise EgnyteTimeoutError(
+                    f"AI Assistant execution {execution_id} still "
+                    f"{status.status} after {timeout:g}s"
+                )
+            time.sleep(interval)
+
+    # -------------------------------------------------------------------------
+    # METHOD: list_agents
+    # -------------------------------------------------------------------------
+
+    def list_agents(
+        self,
+        *,
+        sort_by: AgentSortBy | None = None,
+        sort_order: AgentSortOrder | None = None,
+    ) -> list[Agent]:
+        """
+        List the AI agents configured for the domain.
+
+        Sorted by `name` unless `sort_by="createdOn"`, ascending unless
+        `sort_order="desc"`. Agents must be enabled for the domain; otherwise
+        Egnyte answers 403 `AGENTS_FEATURE_NOT_ENABLED`. Counts against the
+        AI limits described on `ask_document`.
+
+        Returns:
+            list[Agent]: The agents.
+        """
+        return self._run(ai_ops.list_agents(sort_by=sort_by, sort_order=sort_order))
+
+    # -------------------------------------------------------------------------
+    # METHOD: ask_agent
+    # -------------------------------------------------------------------------
+
+    def ask_agent(
+        self,
+        agent_id: str,
+        question: str,
+        *,
+        instructions: str | None = None,
+        entry_ids: list[str] | None = None,
+        folder_ids: list[str] | None = None,
+        chat_history: list[ChatMessage] | None = None,
+        conversation_id: str | None = None,
+    ) -> AgentExecution:
+        """
+        Ask an AI agent a question, answered in the background.
+
+        Poll the returned `request_id` with `get_agent_execution`, or block on
+        `wait_for_agent`. `question` is at most 35,000 characters.
+        `instructions` adds a system prompt; `entry_ids` and `folder_ids` give
+        files and folders as context. Pass a previous `conversation_id` to
+        continue a conversation. Counts against the AI limits described on
+        `ask_document`.
+
+        Returns:
+            AgentExecution: The request ID to poll and the conversation ID.
+        """
+        return self._run(
+            ai_ops.ask_agent(
+                agent_id,
+                question,
+                instructions=instructions,
+                entry_ids=entry_ids,
+                folder_ids=folder_ids,
+                chat_history=chat_history,
+                conversation_id=conversation_id,
+            )
+        )
+
+    # -------------------------------------------------------------------------
+    # METHOD: get_agent_execution
+    # -------------------------------------------------------------------------
+
+    def get_agent_execution(
+        self, agent_id: str, request_id: str
+    ) -> AgentExecutionStatus:
+        """
+        Check on an agent question, and get its answer once done.
+
+        `status` is `PENDING` or `RUNNING` until it ends as `COMPLETED` or
+        `FAILED`. Each check counts against the AI limits described on
+        `ask_document`.
+
+        Returns:
+            AgentExecutionStatus: The status, and the answer once completed.
+        """
+        return self._run(ai_ops.get_agent_execution(agent_id, request_id))
+
+    # -------------------------------------------------------------------------
+    # METHOD: wait_for_agent
+    # -------------------------------------------------------------------------
+
+    def wait_for_agent(
+        self,
+        agent_id: str,
+        request_id: str,
+        *,
+        interval: float = DEFAULT_AI_POLL_INTERVAL,
+        timeout: float = DEFAULT_AI_WAIT_TIMEOUT,
+    ) -> AgentExecutionStatus:
+        """
+        Poll an agent question until it is no longer pending or running.
+
+        Checks every `interval` seconds for up to `timeout` seconds. Every
+        check is one call against the AI daily limit of 100, so the defaults
+        (10 and 180 seconds) cost at most 19 calls. A `FAILED` status is
+        returned, not raised.
+
+        Raises:
+            EgnyteTimeoutError: The question was still running at `timeout`.
+
+        Returns:
+            AgentExecutionStatus: The final status, and the answer once completed.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            status = self.get_agent_execution(agent_id, request_id)
+            if status.status not in AGENT_RUNNING_STATUSES:
+                return status
+            if time.monotonic() + interval > deadline:
+                raise EgnyteTimeoutError(
+                    f"Agent request {request_id} still {status.status} "
+                    f"after {timeout:g}s"
+                )
+            time.sleep(interval)
+
+    # -------------------------------------------------------------------------
+    # METHOD: hybrid_search
+    # -------------------------------------------------------------------------
+
+    def hybrid_search(
+        self,
+        query: str,
+        *,
+        semantic_weight: float = 0.5,
+        folder: str | None = None,
+        folders: list[str] | None = None,
+        exclude_folders: list[str] | None = None,
+        preferred_folder: str | None = None,
+        collection_id: str | None = None,
+        entry_ids: list[str] | None = None,
+        created_by: str | None = None,
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[HybridSearchResult]:
+        """
+        Search file content by keyword and meaning, returning matching passages.
+
+        `query` is 3 to 250 characters. `semantic_weight` balances the two:
+        0.0 is keyword only, 1.0 is meaning only. `folder` or `folders` limit
+        the search to those folders, `exclude_folders` leaves some out, and
+        `preferred_folder` ranks its results higher. `entry_ids` limits it to
+        given file versions, `collection_id` to a knowledge base collection.
+        `limit` is 1 to 1000 files (default 100). Counts against the AI
+        limits described on `ask_document`.
+
+        Returns:
+            list[HybridSearchResult]: Matching files, each with its scored passages.
+        """
+        return self._run(
+            ai_ops.hybrid_search(
+                query,
+                semantic_weight=semantic_weight,
+                folder=folder,
+                folders=folders,
+                exclude_folders=exclude_folders,
+                preferred_folder=preferred_folder,
+                collection_id=collection_id,
+                entry_ids=entry_ids,
+                created_by=created_by,
+                created_after=created_after,
+                created_before=created_before,
+                limit=limit,
             )
         )

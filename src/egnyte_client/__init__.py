@@ -11,10 +11,26 @@ from egnyte_client.errors import (
     EgnyteQuotaExceededError,
     EgnyteRateLimitError,
     EgnyteServerError,
+    EgnyteTimeoutError,
     EgnyteValidationError,
 )
 from egnyte_client.oauth import build_authorization_url
 from egnyte_client.operations.webhook import verify_webhook_authorization
+from egnyte_client.schemas.ai import (
+    Agent,
+    AgentExecution,
+    AgentExecutionStatus,
+    AiAnswer,
+    AiCitation,
+    AiCitationChunk,
+    AssistantExecution,
+    AssistantExecutionStatus,
+    AssistantPendingAction,
+    AssistantToolCall,
+    ChatMessage,
+    HybridSearchChunk,
+    HybridSearchResult,
+)
 from egnyte_client.schemas.audit import (
     AuditEvent,
     AuditEventPage,
@@ -82,6 +98,16 @@ from egnyte_client.schemas.webhook import (
 )
 
 __all__ = [
+    "Agent",
+    "AgentExecution",
+    "AgentExecutionStatus",
+    "AiAnswer",
+    "AiCitation",
+    "AiCitationChunk",
+    "AssistantExecution",
+    "AssistantExecutionStatus",
+    "AssistantPendingAction",
+    "AssistantToolCall",
     "AsyncEgnyteClient",
     "AuditEvent",
     "AuditEventPage",
@@ -92,6 +118,7 @@ __all__ = [
     "Bookmark",
     "ChangePermissionEvent",
     "ChangedPermission",
+    "ChatMessage",
     "Comment",
     "CreatedFolder",
     "CustomProperty",
@@ -109,6 +136,7 @@ __all__ = [
     "EgnyteQuotaExceededError",
     "EgnyteRateLimitError",
     "EgnyteServerError",
+    "EgnyteTimeoutError",
     "EgnyteValidationError",
     "Event",
     "EventCursor",
@@ -124,6 +152,8 @@ __all__ = [
     "Group",
     "GroupMember",
     "GroupSummary",
+    "HybridSearchChunk",
+    "HybridSearchResult",
     "ItemReference",
     "Link",
     "LinkUrl",

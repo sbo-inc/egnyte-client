@@ -16,6 +16,7 @@ The package wraps Egnyte's REST APIs in a fully type-hinted client built on [Pyd
 - **Sync and async.** `EgnyteClient` and `AsyncEgnyteClient` expose the same methods over `httpx`.
 - **Sensible defaults.** Paths are encoded for you, calls refused by the rate limit are retried after `Retry-After`, and an expired token is refreshed when refresh credentials are configured.
 - **The core platform.** Files and folders (including chunked upload, locks, and trash), search, links, permissions, comments, bookmarks, metadata, events, webhooks, users, groups, and audit reporting.
+- **Egnyte AI.** Document questions and summaries, the AI Assistant, agents, and hybrid keyword and semantic search.
 - **Typed errors.** Egnyte's error bodies come in several shapes. Each is raised as an `EgnyteError` with a status, message, and code. `EgnyteNotFoundError`, `EgnyteAuthError`, and `EgnyteRateLimitError` are its subclasses.
 
 ## Installation
@@ -113,6 +114,8 @@ client = EgnyteClient(timeout=60, retries=3, rate_limit_retries=10)
 
 The CLI reads `EGNYTE_API_TIMEOUT` (seconds), `EGNYTE_API_RETRIES` (count), and `EGNYTE_API_HEADERS` (a JSON object of extra headers) for the same behaviour.
 
+The [AI endpoints](#ai) have tighter limits of their own, on top of these: 100 calls a day, 10 a minute, and 2 a second per token.
+
 ## Quick start
 
 ### Python
@@ -192,6 +195,7 @@ $ egnyte-client trash list --count 20
 $ egnyte-client perms set /Shared/Reports --group Finance=Viewer
 $ egnyte-client metadata set project --folder-id FOLDER_ID --value status=active
 $ egnyte-client audit create files 2026-11-01 2026-11-05 --folder /Shared
+$ egnyte-client ai assistant-ask "Summarize the Q3 results" --folder-id FOLDER_ID --wait
 $ egnyte-client --log users list --email jdoe@acme.com
 ```
 
@@ -237,6 +241,7 @@ Every error this package raises is an `EgnyteError`:
 | `EgnyteRateLimitError` | 429: the per-second limit after every retry, or a refusal not worth retrying; `retry_after` is Egnyte's requested wait. |
 | `EgnyteQuotaExceededError` | 429: the token's daily quota is used up (raised at once; resets at 00:00 UTC). A subclass of `EgnyteRateLimitError`. |
 | `EgnyteServerError` | 5xx. |
+| `EgnyteTimeoutError` | A `wait_for_*` helper gave up while the work was still running. Also a `TimeoutError`. |
 
 Egnyte words its errors in several body shapes depending on the API; each is read into the same `message` and `code`:
 
@@ -282,6 +287,15 @@ status = client.get_audit_job(job.id)  # poll at most every 2 minutes
 if status.is_complete:
     report = client.get_audit_report(status.report_type, status.report_id)
     client.delete_audit_report(status.report_type, status.report_id)
+```
+
+AI Assistant and agent questions are answered in the background too. `wait_for_assistant()` and `wait_for_agent()` poll until the answer is ready, every 10 seconds for up to 3 minutes by default. Each check counts against the AI limit of 100 calls a day, so the defaults use at most 19:
+
+```python
+execution = client.ask_assistant("Summarize the Q3 results", folder_ids=[folder_id])
+status = client.wait_for_assistant(execution.execution_id)
+if status.status == "COMPLETED":
+    print(status.response_text)
 ```
 
 ## Design
@@ -389,6 +403,31 @@ while True:
 ```
 
 Each page is one API call, so mind the daily quota when paging deep.
+
+### AI
+
+Docs: [AI](https://developers.egnyte.com/integration/cfs/api-docs/ai-api) · [Agents](https://developers.egnyte.com/integration/cfs/api-docs/agent-api)
+
+| Client | Endpoint | CLI |
+| --- | --- | --- |
+| `ask_document()` | `POST /pubapi/v1/ai/document/{entry_id}/ask` | `egnyte-client ai ask` |
+| `summarize_document()` | `POST /pubapi/v1/ai/document/{entry_id}/summary` | `egnyte-client ai summarize` |
+| `ask_assistant()` | `POST /pubapi/v1/ai/assistant/ask` | `egnyte-client ai assistant-ask` |
+| `get_assistant_execution()` | `GET /pubapi/v1/ai/assistant/{execution_id}/status` | `egnyte-client ai assistant-status` |
+| `wait_for_assistant()` | `GET /pubapi/v1/ai/assistant/{execution_id}/status` | `egnyte-client ai assistant-status --wait` |
+| `list_agents()` | `GET /pubapi/v1/ai/agents/list` | `egnyte-client ai agents` |
+| `ask_agent()` | `POST /pubapi/v1/ai/agents/{agent_id}/ask` | `egnyte-client ai agent-ask` |
+| `get_agent_execution()` | `GET /pubapi/v1/ai/agents/{agent_id}/ask/{request_id}/status` | `egnyte-client ai agent-status` |
+| `wait_for_agent()` | `GET /pubapi/v1/ai/agents/{agent_id}/ask/{request_id}/status` | `egnyte-client ai agent-status --wait` |
+| `hybrid_search()` | `POST /pubapi/v1/hybrid-search` | `egnyte-client ai search` |
+
+These calls need the `Egnyte.ai` scope on the API key and token, and agents must be enabled for the domain (otherwise a 403 with `code` `AGENTS_FEATURE_NOT_ENABLED`). Each call, including each status check, counts against the AI limits of 100 a day, 10 a minute, and 2 a second per token.
+
+- **Document questions** (`ask_document`, `summarize_document`) answer in the response. They take a file version's `entry_id`.
+- **AI Assistant and agent questions** are answered in the background. Ask, then poll the returned ID, or call a `wait_for_*` helper (see [Background jobs](#background-jobs)). Pass the returned `conversation_id` with a follow-up question to continue the conversation, and earlier turns as `chat_history`, a list of `ChatMessage`s.
+- **Hybrid search** blends keyword and meaning (`semantic_weight` from 0.0, keywords only, to 1.0, meaning only) and returns each matching file with its scored passages.
+
+These methods follow Egnyte's documentation and have not been exercised against a live domain. Copilot (`/ai/copilot/ask`, retired on 30 September 2026) and Knowledge Bases (`/ai/kb/...`, replaced by agents) are not wrapped.
 
 ### Trash and insights
 

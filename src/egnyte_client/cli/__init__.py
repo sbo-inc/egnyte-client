@@ -5,6 +5,7 @@ import click
 import httpx
 
 from egnyte_client.cli.commands import (
+    ai,
     audit,
     auth,
     bookmarks,
@@ -88,6 +89,7 @@ for command in (
     auth.group,
     fs.group,
     search.command,
+    ai.group,
     trash.group,
     links.group,
     perms.group,
