@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] - 2026-11-05
 
 - Egnyte AI: `ask_document` and `summarize_document`; the AI Assistant with `ask_assistant`, `get_assistant_execution`, and `wait_for_assistant`; agents with `list_agents`, `ask_agent`, `get_agent_execution`, and `wait_for_agent`; and `hybrid_search`. The CLI commands are under `egnyte-client ai`. Verified against a live domain; the models follow the live responses where they differ from the documentation.
 - `EgnyteTimeoutError`, raised when a `wait_for_*` helper gives up. It is also a `TimeoutError`.
