@@ -103,7 +103,7 @@ client = EgnyteClient(
 
 ### Rate limits, timeouts and retries
 
-Egnyte allows 2 calls per second per token, and between 1,000 and 4,000 calls per day depending on the plan. A call refused by the per-second limit (HTTP 429) is retried after its `Retry-After`, up to `rate_limit_retries` times (default 5). The gateway refuses such a call before it reaches Egnyte, so retrying a write is safe. The daily quota is not retried.
+Egnyte allows 2 calls per second per token, and between 1,000 and 4,000 calls per day depending on the plan. A call refused by the per-second limit (HTTP 429, a spike-arrest violation) is retried after its `Retry-After` (1 second if absent), up to `rate_limit_retries` times (default 5). The gateway refuses such a call before it reaches Egnyte, so retrying a write is safe. The daily quota is never retried: it raises `EgnyteQuotaExceededError` at once, since waiting seconds will not help and the quota resets at 00:00 UTC. Any other 429 is retried only when it asks for a wait of 5 seconds or less, so a long `Retry-After` never blocks the caller.
 
 Every request carries a timeout (default `(5, 30)` seconds for connect and read). Pass `timeout=` to override it (a single float, a `(connect, read)` tuple, or `None` to disable). Pass `retries=` to retry connection-establishment failures:
 
@@ -234,7 +234,8 @@ Every error this package raises is an `EgnyteError`:
 | `EgnyteForbiddenError` | 403: not permitted, a missing scope, or (for folders) already exists. |
 | `EgnyteNotFoundError` | 404: no such path, ID, link, user, or group. |
 | `EgnyteConflictError` | 409: conflicts with existing state, such as a duplicate username. |
-| `EgnyteRateLimitError` | 429 after every retry; `retry_after` is Egnyte's requested wait. |
+| `EgnyteRateLimitError` | 429: the per-second limit after every retry, or a refusal not worth retrying; `retry_after` is Egnyte's requested wait. |
+| `EgnyteQuotaExceededError` | 429: the token's daily quota is used up (raised at once; resets at 00:00 UTC). A subclass of `EgnyteRateLimitError`. |
 | `EgnyteServerError` | 5xx. |
 
 Egnyte words its errors in several body shapes depending on the API; each is read into the same `message` and `code`:

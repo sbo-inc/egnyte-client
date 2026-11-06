@@ -21,6 +21,7 @@ from egnyte_client.errors import (
     EgnyteError,
     EgnyteForbiddenError,
     EgnyteNotFoundError,
+    EgnyteQuotaExceededError,
     EgnyteRateLimitError,
     EgnyteServerError,
     EgnyteValidationError,
@@ -197,17 +198,42 @@ def test_missing_configuration_is_an_egnyte_error_and_a_value_error() -> None:
 # =============================================================================
 
 
+# The per-second refusal as Egnyte's gateway sent it live.
+SPIKE_ARREST = {
+    "fault": {
+        "faultstring": "Spike arrest violation. Allowed rate : 2",
+        "detail": {"errorcode": "policies.ratelimit.SpikeArrestViolation"},
+    }
+}
+# Apigee's standard daily-quota refusal, which Egnyte's gateway uses.
+QUOTA = {
+    "fault": {
+        "faultstring": "Rate limit quota violation. Quota limit  exceeded.",
+        "detail": {"errorcode": "policies.ratelimit.QuotaViolation"},
+    }
+}
+
+
+def _sequence(
+    *responses: httpx.Response,
+) -> tuple[Callable[[httpx.Request], httpx.Response], list[httpx.Request]]:
+    sent: list[httpx.Request] = []
+    pending = iter(responses)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return next(pending)
+
+    return handler, sent
+
+
 def _throttle_then_succeed(failures: int) -> Callable[[httpx.Request], httpx.Response]:
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls["n"] += 1
         if calls["n"] <= failures:
-            return respond(
-                {"fault": {"faultstring": "Spike arrest violation. Allowed rate : 2"}},
-                429,
-                **{"Retry-After": "1"},
-            )
+            return respond(SPIKE_ARREST, 429, **{"Retry-After": "1"})
         return respond(USER_INFO)
 
     return handler
@@ -241,15 +267,114 @@ def test_429_raises_once_retries_are_spent(
     assert len(no_sleep) == 2
 
 
-def test_missing_retry_after_waits_one_second(
+def test_spike_arrest_without_retry_after_waits_one_second(
     make_client: Callable[..., EgnyteClient], no_sleep: list[float]
 ) -> None:
-    responses = iter([respond({}, 429), respond(USER_INFO)])
-    client = make_client(lambda request: next(responses))
+    handler, sent = _sequence(respond(SPIKE_ARREST, 429), respond(USER_INFO))
 
-    client.get_user_info()
+    make_client(handler).get_user_info()
 
     assert no_sleep == [1.0]
+    assert len(sent) == 2
+
+
+def test_daily_quota_raises_at_once(
+    make_client: Callable[..., EgnyteClient], no_sleep: list[float]
+) -> None:
+    handler, sent = _sequence(respond(QUOTA, 429, **{"Retry-After": "1"}))
+
+    with pytest.raises(EgnyteQuotaExceededError) as caught:
+        make_client(handler).get_user_info()
+
+    assert len(sent) == 1
+    assert no_sleep == []
+    assert isinstance(caught.value, EgnyteRateLimitError)
+    assert caught.value.code == "policies.ratelimit.QuotaViolation"
+    assert "daily API quota is used up" in str(caught.value)
+    assert "00:00 UTC" in str(caught.value)
+
+
+def test_daily_quota_is_recognized_by_its_message_alone(
+    make_client: Callable[..., EgnyteClient], no_sleep: list[float]
+) -> None:
+    body = {
+        "fault": {"faultstring": "Rate limit quota violation. Quota limit exceeded."}
+    }
+    handler, sent = _sequence(respond(body, 429))
+
+    with pytest.raises(EgnyteQuotaExceededError):
+        make_client(handler).get_user_info()
+
+    assert len(sent) == 1
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [{"Retry-After": "3600"}, {}, {"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}],
+    ids=["long-wait", "no-retry-after", "http-date"],
+)
+def test_unidentified_429_without_a_short_wait_raises_at_once(
+    make_client: Callable[..., EgnyteClient],
+    no_sleep: list[float],
+    headers: dict[str, str],
+) -> None:
+    handler, sent = _sequence(respond({"message": "Too many requests"}, 429, **headers))
+
+    with pytest.raises(EgnyteRateLimitError) as caught:
+        make_client(handler).get_user_info()
+
+    assert type(caught.value) is EgnyteRateLimitError
+    assert len(sent) == 1
+    assert no_sleep == []
+
+
+def test_spike_arrest_asking_for_a_long_wait_raises_at_once(
+    make_client: Callable[..., EgnyteClient], no_sleep: list[float]
+) -> None:
+    handler, sent = _sequence(respond(SPIKE_ARREST, 429, **{"Retry-After": "60"}))
+
+    with pytest.raises(EgnyteRateLimitError):
+        make_client(handler).get_user_info()
+
+    assert len(sent) == 1
+    assert no_sleep == []
+
+
+def test_unidentified_429_with_a_short_wait_is_retried(
+    make_client: Callable[..., EgnyteClient], no_sleep: list[float]
+) -> None:
+    handler, sent = _sequence(
+        respond({"message": "Too many requests"}, 429, **{"Retry-After": "2"}),
+        respond(USER_INFO),
+    )
+
+    make_client(handler).get_user_info()
+
+    assert no_sleep == [2.0]
+    assert len(sent) == 2
+
+
+async def test_async_daily_quota_raises_at_once(
+    make_async_client: Callable[..., AsyncEgnyteClient], no_sleep: list[float]
+) -> None:
+    handler, sent = _sequence(respond(QUOTA, 429))
+
+    with pytest.raises(EgnyteQuotaExceededError):
+        await make_async_client(handler).get_user_info()
+
+    assert len(sent) == 1
+    assert no_sleep == []
+
+
+async def test_async_unidentified_429_without_retry_after_raises_at_once(
+    make_async_client: Callable[..., AsyncEgnyteClient], no_sleep: list[float]
+) -> None:
+    handler, sent = _sequence(respond({}, 429))
+
+    with pytest.raises(EgnyteRateLimitError):
+        await make_async_client(handler).get_user_info()
+
+    assert len(sent) == 1
 
 
 # =============================================================================

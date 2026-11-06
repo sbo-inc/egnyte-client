@@ -4,7 +4,12 @@ from collections.abc import Callable, Mapping
 
 import httpx
 
-from egnyte_client.errors import EgnyteAPIError, EgnyteConfigurationError
+from egnyte_client.errors import (
+    EgnyteAPIError,
+    EgnyteConfigurationError,
+    rate_limit_kind,
+    retry_after,
+)
 from egnyte_client.operations.generic import Operation, QueryValue
 from egnyte_client.schemas.auth import OAuthToken
 
@@ -24,8 +29,12 @@ DEFAULT_TIMEOUT: tuple[float, float] = (5.0, 30.0)
 # before it reaches Egnyte, so a retried write is never applied twice.
 DEFAULT_RATE_LIMIT_RETRIES = 5
 
-# Wait used when a 429 carries no usable `Retry-After`.
+# Wait used when a per-second refusal carries no usable `Retry-After`.
 DEFAULT_RETRY_AFTER = 1.0
+
+# The longest `Retry-After` the client waits out. A 429 asking for longer is
+# not the per-second limit, and blocking the caller for it would not help.
+MAX_RETRY_AFTER = 5.0
 
 type TokenCallback = Callable[[OAuthToken], None]
 
@@ -281,25 +290,33 @@ class BaseEgnyteClient:
         """
         How long to wait before retrying a response, or None not to retry.
 
-        Only a 429 is retried, for up to `rate_limit_retries` attempts, after
-        the `Retry-After` the gateway sends with it.
+        Only the per-second limit is retried: a 429 whose fault names spike
+        arrest, or any 429 asking for a wait of at most `MAX_RETRY_AFTER`
+        seconds, for up to `rate_limit_retries` attempts. The daily quota, a
+        longer wait, or an unidentified 429 with no `Retry-After` raises at
+        once, as waiting seconds would not get the call through.
 
         Returns:
             float | None: Seconds to wait, or None.
         """
         if response.status_code != 429 or attempt >= self.rate_limit_retries:
             return None
-        try:
-            delay = float(response.headers.get("Retry-After", DEFAULT_RETRY_AFTER))
-        except ValueError:
-            delay = DEFAULT_RETRY_AFTER
+        kind = rate_limit_kind(response)
+        wait = retry_after(response)
+        if kind == "quota" or (wait is not None and wait > MAX_RETRY_AFTER):
+            return None
+        if wait is None:
+            if kind != "spike_arrest":
+                return None
+            wait = DEFAULT_RETRY_AFTER
+        delay = wait
         logger.info(
             "rate limited; retrying in %.1fs (attempt %d of %d)",
             delay,
             attempt + 1,
             self.rate_limit_retries,
         )
-        return max(delay, 0.0)
+        return delay
 
     # -------------------------------------------------------------------------
     # METHOD: _raise_for_status

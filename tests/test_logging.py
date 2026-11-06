@@ -65,7 +65,10 @@ def test_building_clients_leaves_the_logger_alone() -> None:
 def test_requests_log_at_debug_and_retries_at_info(
     make_client: Callable[..., EgnyteClient], caplog: pytest.LogCaptureFixture
 ) -> None:
-    responses = iter([respond({}, 429), respond({"id": 1, "username": "jdoe"})])
+    spike = {
+        "fault": {"detail": {"errorcode": "policies.ratelimit.SpikeArrestViolation"}}
+    }
+    responses = iter([respond(spike, 429), respond({"id": 1, "username": "jdoe"})])
     client = make_client(lambda request: next(responses))
 
     with caplog.at_level(logging.DEBUG, logger="egnyte_client"):

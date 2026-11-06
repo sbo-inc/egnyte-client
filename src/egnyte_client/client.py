@@ -162,7 +162,10 @@ class EgnyteClient(BaseEgnyteClient):
                 (default) disables retries.
             rate_limit_retries: Number of times a call refused by the
                 per-second rate limit (HTTP 429) is retried after its
-                `Retry-After`. Defaults to `DEFAULT_RATE_LIMIT_RETRIES`.
+                `Retry-After`. Defaults to `DEFAULT_RATE_LIMIT_RETRIES`. The
+                daily quota is never retried and raises
+                `EgnyteQuotaExceededError`; any other 429 is retried only
+                when it asks for a wait of `MAX_RETRY_AFTER` seconds or less.
         """
         super().__init__(
             domain=domain,

@@ -9,7 +9,7 @@ rate limit - without matching on a number.
 """
 
 import json
-from typing import cast
+from typing import Literal, cast, override
 
 import httpx
 
@@ -90,6 +90,8 @@ class EgnyteAPIError(EgnyteError):
         """
         message, code = _describe(response)
         error_cls = error_for_status(response.status_code)
+        if response.status_code == 429 and rate_limit_kind(response) == "quota":
+            error_cls = EgnyteQuotaExceededError
         return error_cls(response.status_code, message, code, response.text, response)
 
 
@@ -128,7 +130,12 @@ class EgnyteConflictError(EgnyteAPIError):
 
 class EgnyteRateLimitError(EgnyteAPIError):
     """
-    429: the per-second rate limit still refused the call after every retry.
+    429: Egnyte's gateway refused the call for exceeding a rate limit.
+
+    Raised when the per-second limit still refused the call after every retry,
+    or at once for a refusal the client does not retry: one asking for a wait
+    longer than a few seconds, or one it cannot identify as the per-second
+    limit. The daily quota raises the `EgnyteQuotaExceededError` subclass.
     """
 
     @property
@@ -139,11 +146,24 @@ class EgnyteRateLimitError(EgnyteAPIError):
         Returns:
             float | None: The delay, or None when no usable header was sent.
         """
-        header = self.response.headers.get("Retry-After") if self.response else None
-        try:
-            return float(header) if header else None
-        except ValueError:
-            return None
+        return retry_after(self.response) if self.response is not None else None
+
+
+class EgnyteQuotaExceededError(EgnyteRateLimitError):
+    """
+    429: the token's daily call quota is used up.
+
+    Egnyte allows each access token a fixed number of calls a day (1,000 on
+    most plans), reset at 00:00 UTC. Waiting seconds does not help, so the
+    client raises this at once rather than retrying.
+    """
+
+    @override
+    def __str__(self) -> str:
+        return (
+            f"{super().__str__()} - the token's daily API quota is used up; "
+            "it resets at 00:00 UTC"
+        )
 
 
 class EgnyteServerError(EgnyteAPIError):
@@ -160,6 +180,51 @@ STATUS_ERRORS: dict[int, type[EgnyteAPIError]] = {
     409: EgnyteConflictError,
     429: EgnyteRateLimitError,
 }
+
+
+# =============================================================================
+# FUNCTIONS: Rate limits
+# =============================================================================
+#
+# Egnyte's gateway (Apigee) answers both of its limits with 429, and says
+# which one in the fault's error code: `policies.ratelimit.SpikeArrestViolation`
+# for the per-second limit, seen live, and Apigee's
+# `policies.ratelimit.QuotaViolation` for the daily quota. The fault string is
+# checked too, in case a code is missing.
+
+type RateLimitKind = Literal["spike_arrest", "quota", "unknown"]
+
+
+def rate_limit_kind(response: httpx.Response) -> RateLimitKind:
+    """
+    Tell which of Egnyte's limits refused a 429.
+
+    Returns:
+        RateLimitKind: `spike_arrest` for the per-second limit, `quota` for
+            the daily quota, or `unknown`.
+    """
+    message, code = _describe(response)
+    text = f"{code or ''} {message}".lower()
+    if "quotaviolation" in text or "quota violation" in text:
+        return "quota"
+    if "spikearrestviolation" in text or "spike arrest" in text:
+        return "spike_arrest"
+    return "unknown"
+
+
+def retry_after(response: httpx.Response) -> float | None:
+    """
+    Read a response's `Retry-After` as seconds.
+
+    Returns:
+        float | None: The delay, or None when the header is missing or is an
+            HTTP date rather than a number of seconds.
+    """
+    header = response.headers.get("Retry-After")
+    try:
+        return max(float(header), 0.0) if header else None
+    except ValueError:
+        return None
 
 
 def error_for_status(status: int) -> type[EgnyteAPIError]:
