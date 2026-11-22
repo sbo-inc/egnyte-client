@@ -1136,7 +1136,7 @@ class EgnyteClient(BaseEgnyteClient):
         and `similar_to_text` find items like the given file versions or text.
 
         Results come a page at a time: `count` is 1 to 20 (default 20), and
-        the next page starts at `offset + count` while `has_more` is true.
+        the next page starts at the page's own `offset` while `has_more` is true.
 
         Returns:
             SearchResults: One page of hits, best first unless `sort_by` is set.

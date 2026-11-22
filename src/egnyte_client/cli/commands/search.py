@@ -82,7 +82,8 @@ def command(
     """
     Search file and folder names, file content, comments, and metadata.
 
-    Prints one page of hits with `has_more`; pass `--offset` to page on.
+    Prints one page of hits with `has_more`; pass the page's `offset` as
+    `--offset` to page on.
     """
     if not query and not metadata:
         raise click.UsageError("Give a QUERY, --metadata, or both.")

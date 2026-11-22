@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.3.0] - 2026-11-22
+
+- `SearchResults.offset`, where the next page of a search starts. Egnyte can pass over index positions, so paging by the request's `offset` plus `count` repeats hits; send each page's `offset` as the next request's `offset` instead.
+
 ## [0.2.0] - 2026-11-05
 
 - Egnyte AI: `ask_document` and `summarize_document`; the AI Assistant with `ask_assistant`, `get_assistant_execution`, and `wait_for_assistant`; agents with `list_agents`, `ask_agent`, `get_agent_execution`, and `wait_for_agent`; and `hybrid_search`. The CLI commands are under `egnyte-client ai`. Verified against a live domain; the models follow the live responses where they differ from the documentation.

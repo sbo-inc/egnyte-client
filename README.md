@@ -381,7 +381,7 @@ Docs: [Search](https://developers.egnyte.com/integration/cfs/api-docs/search-api
 - `metadata_filters`, a list of `MetadataFilter`s, for custom metadata.
 - `similar_to_entry_ids` and `similar_to_text`, for similarity search.
 
-The query must be 3 to 250 characters. Results arrive 20 at a time at most, best match first. Page with `offset` while `has_more` is true:
+The query must be 3 to 250 characters. Results arrive 20 at a time at most, best match first. Page by sending each page's `offset` back while `has_more` is true:
 
 ```python
 from egnyte_client import MetadataFilter
@@ -399,7 +399,7 @@ while True:
     handle(page.results)
     if not page.has_more:
         break
-    offset += page.count
+    offset = page.offset
 ```
 
 Each page is one API call, so mind the daily quota when paging deep.

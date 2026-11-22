@@ -204,9 +204,9 @@ class SearchResults(GenericBaseModel):
     """
     One page of search results.
 
-    Page with `offset` and `count` on the request, and stop when `has_more`
-    is false. `total_count` is not a full total: Egnyte reports at most one
-    more than the page holds.
+    Page by sending each page's `offset` as the next request's `offset`, and
+    stop when `has_more` is false. `total_count` is not a full total: Egnyte
+    reports at most one more than the page holds.
     """
 
     results: list[SearchResult] = Field(
@@ -216,6 +216,13 @@ class SearchResults(GenericBaseModel):
     count: int = Field(
         default=0,
         description="Number of hits in this page.",
+    )
+    offset: int = Field(
+        default=0,
+        description=(
+            "Where the next page starts. Egnyte can pass over index positions, "
+            "so this is not always the request's `offset` plus `count`."
+        ),
     )
     total_count: int = Field(
         default=0,
