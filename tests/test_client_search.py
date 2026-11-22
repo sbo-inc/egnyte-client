@@ -47,9 +47,10 @@ FOLDER_HIT: dict[str, Any] = {
     "score": 1159.9921,
 }
 
+# Shaped after a live first page, whose offset is where the next page starts.
 PAGE: dict[str, Any] = {
     "count": 2,
-    "offset": 0,
+    "offset": 5,
     "total_count": 3,
     "results": [FILE_HIT, FOLDER_HIT],
     "hasMore": True,
@@ -221,6 +222,7 @@ def test_results_parse_file_and_folder_hits(
 
     assert page.has_more is True
     assert page.count == 2
+    assert page.offset == 5
     file_hit, folder_hit = page.results
 
     assert file_hit.is_folder is False
